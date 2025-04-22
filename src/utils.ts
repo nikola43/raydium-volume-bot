@@ -247,7 +247,7 @@ export const distributeSol = async (
     }
 
     if (ixs.length === 0) {
-        logger.info("No new token accounts created");
+        logger.info("No new instrunctions accounts created");
         return;
     }
 
