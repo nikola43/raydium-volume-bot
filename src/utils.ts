@@ -1,4 +1,4 @@
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, NATIVE_MINT } from "@solana/spl-token";
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { logger } from "./logger";
 import { JitoClient } from "./jito-client";
@@ -85,24 +85,24 @@ export const processBundleTransactions = async (
     }
     logger.info("All transactions simulated successfully, sending bundle...");
 
-    // // Send bundle
-    // const bundleId = await jitoClient.sendBundle(transactions);
-    // if (!bundleId) {
-    //     logger.error("Failed to send bundle");
-    //     return false;
-    // }
-    // logger.info(`Bundle sent successfully with ID: ${bundleId}`);
+    // Send bundle
+    const bundleId = await jitoClient.sendBundle(transactions);
+    if (!bundleId) {
+        logger.error("Failed to send bundle");
+        return false;
+    }
+    logger.info(`Bundle sent successfully with ID: ${bundleId}`);
 
-    // // Confirm transactions
-    // for (const transaction of transactions) {
-    //     const signature = bs58.encode(transaction.signatures[0]);
-    //     const isConfirmed = await confirmTransaction(connection, signature);
-    //     if (!isConfirmed) {
-    //         logger.error(`Transaction ${signature} failed to confirm`);
-    //     } else {
-    //         logger.info(`Transaction ${signature} confirmed successfully`);
-    //     }
-    // }
+    // Confirm transactions
+    for (const transaction of transactions) {
+        const signature = bs58.encode(transaction.signatures[0]);
+        const isConfirmed = await confirmTransaction(connection, signature);
+        if (!isConfirmed) {
+            logger.error(`Transaction ${signature} failed to confirm`);
+        } else {
+            logger.info(`Transaction ${signature} confirmed successfully`);
+        }
+    }
 
     return true;
 }
@@ -155,9 +155,51 @@ export const createTokenAta = async (
                 new PublicKey(mint),
             );
             ixs.push(createAtaIx);
-            await sleep(500);
+            await sleep(500); // not spam RPC
         } else {
             logger.info(`Token account already exists for keypair ${wallet.publicKey.toString()}`);
+            await sleep(500); // not spam RPC
+        }
+    }
+
+    // Add tip instruction
+    const tipIx = await JitoClient.buildTipInstruction(payer);
+    if (!tipIx) {
+        logger.error("Failed to build tip instruction");
+        return;
+    }
+    ixs.push(tipIx);
+
+    // Process the instructions
+    await processInstructionsInChunks(payer, ixs, chunkSize, connection, jitoClient);
+}
+
+export const createWSOLAta = async (
+    payer: Keypair,
+    wallets: Keypair[],
+    connection: Connection,
+    jitoClient: JitoClient
+) => {
+    const ixs: TransactionInstruction[] = [];
+    const chunkSize = 12; // Max 12 DO NOT EXCEED THIS
+
+    // Collect instructions for creating token accounts
+    for (const wallet of wallets) {
+        const tokenATA = await getAssociatedTokenAddress(NATIVE_MINT, wallet.publicKey);
+        const tokenAccount = await connection.getAccountInfo(tokenATA);
+        if (!tokenAccount) {
+            logger.info(`Creating WSOL token account for keypair ${wallet.publicKey.toString()}`);
+            // Add instruction to create the token account
+            const createAtaIx = createAssociatedTokenAccountIdempotentInstruction(
+                payer.publicKey,
+                tokenATA,
+                wallet.publicKey,
+                NATIVE_MINT
+            );
+            ixs.push(createAtaIx);
+            await sleep(500); // not spam RPC
+        } else {
+            logger.info(`Token WSOL account already exists for keypair ${wallet.publicKey.toString()}`);
         }
     }
 

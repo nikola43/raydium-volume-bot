@@ -2,7 +2,7 @@
 import { Connection, Keypair, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import { logger } from './logger';
-import { checkIfTokenATAExists, createTokenAta, distributeSol, getTokenBalance } from "./utils";
+import { checkIfTokenATAExists, createTokenAta, createWSOLAta, distributeSol, getTokenBalance } from "./utils";
 import bs58 from "bs58";
 import fs from "fs";
 import { JitoClient } from "./jito-client";
@@ -64,7 +64,8 @@ export class WalletManager {
         jitoClient: JitoClient
     ): Promise<void> {
         logger.info(`Creating token accounts for ${wallets.length} wallets`);
-        await createTokenAta(feePayer, wallets, tokenMint, connection, jitoClient);
+        // await createTokenAta(feePayer, wallets, tokenMint, connection, jitoClient);
+        await createWSOLAta(feePayer, wallets, connection, jitoClient);
         
 
 
