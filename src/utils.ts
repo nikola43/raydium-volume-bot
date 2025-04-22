@@ -162,6 +162,11 @@ export const createTokenAta = async (
         }
     }
 
+    if (ixs.length === 0) {
+        logger.info("No new token accounts created");
+        return;
+    }
+
     // Add tip instruction
     const tipIx = await JitoClient.buildTipInstruction(payer);
     if (!tipIx) {
@@ -239,6 +244,11 @@ export const distributeSol = async (
                 toPubkey: wallet.publicKey,
                 lamports: amount,
             }));
+    }
+
+    if (ixs.length === 0) {
+        logger.info("No new token accounts created");
+        return;
     }
 
     // Add tip instruction
