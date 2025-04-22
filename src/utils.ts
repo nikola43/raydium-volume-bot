@@ -1,4 +1,4 @@
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { logger } from "./logger";
 import { JitoClient } from "./jito-client";
@@ -244,6 +244,45 @@ export const distributeSol = async (
                 toPubkey: wallet.publicKey,
                 lamports: amount,
             }));
+    }
+
+    if (ixs.length === 0) {
+        logger.info("No new instrunctions accounts created");
+        return;
+    }
+
+    // Add tip instruction
+    const tipIx = await JitoClient.buildTipInstruction(payer);
+    if (!tipIx) {
+        logger.error("Failed to build tip instruction");
+        return;
+    }
+    ixs.push(tipIx);
+
+    // Process the instructions
+    await processInstructionsInChunks(payer, ixs, chunkSize, connection, jitoClient);
+}
+
+
+export const closeTokenATA = async (
+    payer: Keypair,
+    wallets: Keypair[],
+    mint: string,
+    connection: Connection,
+    jitoClient: JitoClient
+) => {
+    const ixs: TransactionInstruction[] = [];
+    const chunkSize = 21; // Max 21 instructions per transaction DO NOT EXCEED THIS
+
+    // Collect instructions for transferring SOL
+    for (const wallet of wallets) {
+        const tokenATA = await getAssociatedTokenAddress(new PublicKey(mint), wallet.publicKey);
+        const tokenAccount = await connection.getAccountInfo(tokenATA);
+        if (!tokenAccount) {
+            logger.info(`Token account not found for keypair ${wallet.publicKey.toString()}`);
+            continue;
+        }
+        ixs.push(createCloseAccountInstruction(tokenATA, wallet.publicKey, wallet.publicKey));
     }
 
     if (ixs.length === 0) {

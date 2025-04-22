@@ -6,6 +6,7 @@ import {
 import bs58 from "bs58";
 import dotenv from "dotenv";
 import {
+    BASE_MINT,
     DISTRIBUTION_AMOUNT,
     FEE_PAYER_KEYPAIR,
     JITO_BLOCK_ENGINE_URL,
@@ -13,6 +14,7 @@ import {
     RPC_URL,
 } from "./constants";
 import {
+    closeTokenATA,
     parseUnits,
 } from "./utils";
 import { logger } from './logger';
@@ -32,15 +34,24 @@ const main = async () => {
     const wallets = walletManager.loadWallets();
 
     const jitoClient = new JitoClient(JITO_KEYPAIR, JITO_BLOCK_ENGINE_URL, connection);
+    const baseMint = BASE_MINT
 
-    const distributionAmount = parseUnits(DISTRIBUTION_AMOUNT, 9);
-    await walletManager.distributeSol(
+    // const distributionAmount = parseUnits(DISTRIBUTION_AMOUNT, 9);
+    // await walletManager.distributeSol(
+    //     feePayer,
+    //     wallets,
+    //     distributionAmount,
+    //     connection,
+    //     jitoClient
+    // );
+
+    await closeTokenATA(
         feePayer,
         wallets,
-        distributionAmount,
-        connection,
-        jitoClient
-    );
+        baseMint,
+        connection, 
+        jitoClient,   
+    );    
 };
 
 
