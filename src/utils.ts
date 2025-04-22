@@ -85,24 +85,24 @@ export const processBundleTransactions = async (
     }
     logger.info("All transactions simulated successfully, sending bundle...");
 
-    // Send bundle
-    const bundleId = await jitoClient.sendBundle(transactions);
-    if (!bundleId) {
-        logger.error("Failed to send bundle");
-        return false;
-    }
-    logger.info(`Bundle sent successfully with ID: ${bundleId}`);
+    // // Send bundle
+    // const bundleId = await jitoClient.sendBundle(transactions);
+    // if (!bundleId) {
+    //     logger.error("Failed to send bundle");
+    //     return false;
+    // }
+    // logger.info(`Bundle sent successfully with ID: ${bundleId}`);
 
-    // Confirm transactions
-    for (const transaction of transactions) {
-        const signature = bs58.encode(transaction.signatures[0]);
-        const isConfirmed = await confirmTransaction(connection, signature);
-        if (!isConfirmed) {
-            logger.error(`Transaction ${signature} failed to confirm`);
-        } else {
-            logger.info(`Transaction ${signature} confirmed successfully`);
-        }
-    }
+    // // Confirm transactions
+    // for (const transaction of transactions) {
+    //     const signature = bs58.encode(transaction.signatures[0]);
+    //     const isConfirmed = await confirmTransaction(connection, signature);
+    //     if (!isConfirmed) {
+    //         logger.error(`Transaction ${signature} failed to confirm`);
+    //     } else {
+    //         logger.info(`Transaction ${signature} confirmed successfully`);
+    //     }
+    // }
 
     return true;
 }
@@ -200,7 +200,13 @@ export const createWSOLAta = async (
             await sleep(500); // not spam RPC
         } else {
             logger.info(`Token WSOL account already exists for keypair ${wallet.publicKey.toString()}`);
+            await sleep(500); // not spam RPC
         }
+    }
+
+    if (ixs.length === 0) {
+        logger.info("No new token accounts created");
+        return;
     }
 
     // Add tip instruction
