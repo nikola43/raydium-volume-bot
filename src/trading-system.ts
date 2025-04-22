@@ -24,7 +24,7 @@ import { JitoClient } from './jito-client';
 
 
 import { logger } from './logger';
-import { parseUnits, sleep, chunkArray, simulateTransaction, confirmTransaction } from "./utils";
+import { parseUnits, sleep, chunkArray, confirmTransaction } from "./utils";
 import { WalletManager } from "./wallet-manager";
 import { SwapManager } from "./swap-manager";
 
@@ -79,7 +79,7 @@ export class TradingSystem {
             // );
         }
 
-        await this.walletManager.prepareTokenAccounts(wallets, BASE_MINT, this.connection);
+        await this.walletManager.prepareTokenAccounts(this.feePayer, wallets, BASE_MINT, this.connection, this.jitoClient);
 
         logger.info("Trading system initialized successfully");
     }
@@ -269,12 +269,13 @@ export class TradingSystem {
 
         for (let i = 0; i < transactions.length; i++) {
             try {
-                const isValid = await simulateTransaction(this.connection, transactions[i]);
-                if (isValid) {
-                    validTransactions.push(transactions[i]);
-                } else {
-                    logger.error(`Transaction ${i} simulation failed`);
+                const simulationResult = await this.connection.simulateTransaction(transactions[i], { commitment: COMMITMENT });
+                if (simulationResult.value.err) {
+                    logger.error(`Simulation error for transaction: ${JSON.stringify(simulationResult.value.err)}`);
+                    continue
                 }
+
+                validTransactions.push(transactions[i]);
             } catch (error) {
                 logger.error(`Error simulating transaction ${i}:`, error);
             }

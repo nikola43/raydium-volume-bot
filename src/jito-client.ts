@@ -1,15 +1,14 @@
 import { Keypair, SystemProgram, TransactionMessage, VersionedTransaction, Connection, PublicKey, TransactionInstruction } from '@solana/web3.js';
 import {
     SearcherClient,
-    SearcherClientError,
     searcherClient as jitoSearcherClient,
 } from 'jito-ts/dist/sdk/block-engine/searcher.js';
 import { Bundle as JitoBundle } from "jito-ts/dist/sdk/block-engine/types.js";
 import axios from 'axios';
 import bs58 from "bs58";
-import { Result } from 'jito-ts/dist/sdk/block-engine/utils';
 import BN from 'bn.js';
 import { logger } from './logger';
+import { COMMITMENT } from './constants';
 
 /**
  * Interface for Jito tip floor data
@@ -185,44 +184,29 @@ export class JitoClient {
      */
     async addTipToTransaction(signer: Keypair, transaction: VersionedTransaction): Promise<VersionedTransaction | undefined> {
         try {
-            // Get the latest blockhash
-            const { blockhash } = await this.connection.getLatestBlockhash("finalized");
+            // get the latest blockhash
+            const { blockhash } = await this.connection.getLatestBlockhash(COMMITMENT);
 
-            // Get Jito tip account and amount
-            const tipAcct = await JitoClient.getRandomTipAccount();
-            if (!tipAcct) {
-                logger.error("Failed to get tip account");
+            // build the tip instruction
+            const tipIx = await JitoClient.buildTipInstruction(signer);
+            if (!tipIx) {
+                logger.error("Failed to get tip instruction");
                 return undefined;
             }
-
-            const jitoTips = await JitoClient.getJitoTipFloor();
-            if (!jitoTips) {
-                logger.error("Failed to get tip amount");
-                return undefined;
-            }
-
-            const tipAmountLamports = Math.floor(jitoTips.landed_tips_95th_percentile * Math.pow(10, 9));
-            const jitoTipAmount = new BN(tipAmountLamports.toString());
-
-            const tipInstruction = SystemProgram.transfer({
-                fromPubkey: signer.publicKey,
-                toPubkey: new PublicKey(tipAcct),
-                lamports: jitoTipAmount.toNumber(),
-            });
 
             const message = transaction.message;
             const addressLookupTableAccounts = await this.fetchAddressLookupTableAccounts(
                 message.addressTableLookups
             );
 
-            const originalInstructions = TransactionMessage.decompile(message, {
+            const originalIxs = TransactionMessage.decompile(message, {
                 addressLookupTableAccounts
             }).instructions;
 
             const newTransactionMessage = new TransactionMessage({
                 payerKey: signer.publicKey,
                 recentBlockhash: blockhash,
-                instructions: [...originalInstructions, tipInstruction]
+                instructions: [...originalIxs, tipIx]
             }).compileToV0Message(addressLookupTableAccounts);
 
             const newTransaction = new VersionedTransaction(newTransactionMessage);
@@ -237,35 +221,20 @@ export class JitoClient {
 
     async buildTipTransaction(signer: Keypair): Promise<VersionedTransaction | undefined> {
         try {
-            // Get the latest blockhash
-            const { blockhash } = await this.connection.getLatestBlockhash("finalized");
+            // get the latest blockhash
+            const { blockhash } = await this.connection.getLatestBlockhash(COMMITMENT);
 
-            // Get Jito tip account and amount
-            const tipAcct = await JitoClient.getRandomTipAccount();
-            if (!tipAcct) {
-                logger.error("Failed to get tip account");
+            // build the tip instruction
+            const tipIx = await JitoClient.buildTipInstruction(signer);
+            if (!tipIx) {
+                logger.error("Failed to get tip instruction");
                 return undefined;
             }
-
-            const jitoTips = await JitoClient.getJitoTipFloor();
-            if (!jitoTips) {
-                logger.error("Failed to get tip amount");
-                return undefined;
-            }
-
-            const tipAmountLamports = Math.floor(jitoTips.landed_tips_95th_percentile * Math.pow(10, 9));
-            const jitoTipAmount = new BN(tipAmountLamports.toString());
-
-            const tipInstruction = SystemProgram.transfer({
-                fromPubkey: signer.publicKey,
-                toPubkey: new PublicKey(tipAcct),
-                lamports: jitoTipAmount.toNumber(),
-            });
 
             const message = new TransactionMessage({
                 payerKey: signer.publicKey,
                 recentBlockhash: blockhash,
-                instructions: [tipInstruction]
+                instructions: [tipIx]
             }).compileToV0Message();
 
             const newTransaction = new VersionedTransaction(message);

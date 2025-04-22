@@ -1,8 +1,8 @@
 import { Connection, Keypair, VersionedTransaction } from "@solana/web3.js";
 import axios from "axios";
 import dotenv from "dotenv";
-import { simulateTransaction } from "./utils";
 import { logger } from "./logger";
+import { COMMITMENT } from "./constants";
 const { HttpsProxyAgent } = require('https-proxy-agent');
 dotenv.config();
 
@@ -79,8 +79,12 @@ export const performSwap = async (connection: Connection, payer: Keypair, inputM
     const transaction = VersionedTransaction.deserialize(Buffer.from(transactionBase64, 'base64'));
     transaction.sign([payer]);
 
-    const isSimulationSuccess = await simulateTransaction(connection, transaction);
-    if (!isSimulationSuccess) {
+    const simulationResult = await connection.simulateTransaction(transaction, { commitment: COMMITMENT });
+    const simulationSuccess = !simulationResult.value.err;
+    if (simulationResult.value.err) {
+        logger.error(`Simulation error for transaction: ${JSON.stringify(simulationResult.value.err)}`);
+    }
+    if (!simulationSuccess) {
         logger.error("Failed to simulate transaction");
         return undefined;
     }

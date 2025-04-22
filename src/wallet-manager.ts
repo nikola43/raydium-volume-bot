@@ -1,8 +1,8 @@
 // WalletManager.ts
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import { logger } from './logger';
-import { checkIfTokenATAExists, createWSolAndTokenAtas, distributeSol, getTokenBalance } from "./utils";
+import { checkIfTokenATAExists, createTokenAta, distributeSol, getTokenBalance } from "./utils";
 import bs58 from "bs58";
 import fs from "fs";
 import { JitoClient } from "./jito-client";
@@ -49,7 +49,7 @@ export class WalletManager {
         jitoClient: JitoClient
     ): Promise<void> {
         logger.info(`Distributing SOL to ${wallets.length} wallets`);
-        await distributeSol(feePayer, wallets, amount, connection, jitoClient );
+        await distributeSol(feePayer, wallets, amount, connection, jitoClient);
         logger.info(`SOL distribution complete`);
     }
 
@@ -57,27 +57,33 @@ export class WalletManager {
      * Prepare token accounts for all wallets
      */
     async prepareTokenAccounts(
+        feePayer: Keypair,
         wallets: Keypair[],
         tokenMint: string,
-        connection: Connection
+        connection: Connection,
+        jitoClient: JitoClient
     ): Promise<void> {
         logger.info(`Creating token accounts for ${wallets.length} wallets`);
-        await createWSolAndTokenAtas(wallets, tokenMint, connection);
+        await createTokenAta(feePayer, wallets, tokenMint, connection, jitoClient);
+        
 
-        logger.info(`Verifying token accounts...`);
-        let numberOfValidAtas = 0;
-        while (numberOfValidAtas < wallets.length) {
-            const validAta = await checkIfTokenATAExists(
-                wallets[numberOfValidAtas],
-                tokenMint,
-                connection
-            );
 
-            if (validAta) {
-                numberOfValidAtas++;
-            }
-        }
-        logger.info(`All token accounts verified`);
+        // await createWSolAndTokenAtas(wallets, tokenMint, connection);
+
+        // logger.info(`Verifying token accounts...`);
+        // let numberOfValidAtas = 0;
+        // while (numberOfValidAtas < wallets.length) {
+        //     const validAta = await checkIfTokenATAExists(
+        //         wallets[numberOfValidAtas],
+        //         tokenMint,
+        //         connection
+        //     );
+
+        //     if (validAta) {
+        //         numberOfValidAtas++;
+        //     }
+        // }
+        // logger.info(`All token accounts verified`);
     }
 
     /**
