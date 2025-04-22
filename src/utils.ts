@@ -1,6 +1,9 @@
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, NATIVE_MINT } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { logger } from "./logger";
+import { JitoClient } from "./jito-client";
+import { MAX_TX_SIZE } from "./constants";
+import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 
 export const checkIfTokenATAExists = async (keypair: Keypair, mint: string, connection: Connection): Promise<boolean> => {
     const tokenATA = await getAssociatedTokenAddress(new PublicKey(mint), keypair.publicKey);
@@ -100,7 +103,7 @@ export const confirmTransaction = async (connection: Connection, signature: stri
 
         logger.info(`Attempt ${retries} to confirm transaction ${signature}`);
         // Fetch the latest blockhash and last valid block height
-        const latestBlockhash = await connection.getLatestBlockhash("finalized");
+        const latestBlockhash = await connection.getLatestBlockhash("confirmed");
 
         // Confirm the transaction using the new method signature
         const confirmation = await connection.confirmTransaction(
@@ -122,58 +125,77 @@ export const confirmTransaction = async (connection: Connection, signature: stri
 }
 
 
-export const distributeSol = async (payer: Keypair, wallets: Keypair[], amount: number, connection: Connection) => {
-    for (let i = 0; i < wallets.length; i++) {
-        const keypair = wallets[i];
+export const distributeSol = async (payer: Keypair, wallets: Keypair[], amount: number, connection: Connection, jitoClient: JitoClient) => {
+    const transferIxs: TransactionInstruction[] = [];
+    const chunkSize = 21; // Max 21 instructions per transaction DO NOT EXCEED THIS
 
-        let retries = 0;
-        const maxRetries = 5;
+    for (const wallet of wallets) {
+        transferIxs.push(
+            SystemProgram.transfer({
+                fromPubkey: payer.publicKey,
+                toPubkey: wallet.publicKey,
+                lamports: amount,
+            }));
+    }
 
-        while (retries < maxRetries) {
-            retries++;
-            try {
-                const { blockhash } = await connection.getLatestBlockhash("finalized");
-                // Create a transfer instruction
-                const transferInstruction = SystemProgram.transfer({
-                    fromPubkey: payer.publicKey,
-                    toPubkey: keypair.publicKey,
-                    lamports: amount,
-                });
+    const tipIx = await JitoClient.buildTipInstruction(payer);
+    if (!tipIx) {
+        logger.error("Failed to build tip instruction");
+        return;
+    }
+    transferIxs.push(tipIx);
 
-                // Create a TransactionMessage
-                const messageV0 = new TransactionMessage({
-                    payerKey: payer.publicKey,
-                    recentBlockhash: blockhash,
-                    instructions: [transferInstruction]
-                }).compileToV0Message();
+    const bundleTxns: VersionedTransaction[] = [];
+    const ixsChunks = chunkArray(transferIxs, chunkSize);
 
-                // Create a VersionedTransaction
-                const transaction = new VersionedTransaction(messageV0);
-                // Sign the transaction
-                transaction.sign([payer]);
+    for (const ixsChunk of ixsChunks) {
+        try {
+            const latestBlockhash = await connection.getLatestBlockhash("finalized");
+            const messageV0 = new TransactionMessage({
+                payerKey: payer.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: ixsChunk
+            }).compileToV0Message();
 
-                // Send the transaction and wait for confirmation
-                const signature = await connection.sendTransaction(transaction);
+            const transaction = new VersionedTransaction(messageV0);
+            const serializedMsg = transaction.serialize();
 
-                logger.info(`Sent ${amount / 10 ** 9} SOL to ${keypair.publicKey.toBase58()} with signature ${signature}`);
-
-                const isSimulationSuccess = await simulateTransaction(connection, transaction);
-                if (!isSimulationSuccess) {
-                    logger.error("Failed to simulate transaction");
-                    return;
-                }
-
-                const isConfirmed = await confirmTransaction(connection, signature);
-                if (!isConfirmed) {
-                    logger.error("Failed to confirm transaction");
-                } else {
-                    logger.info("Transaction confirmed: ", signature);
-                    break;
-                }
-            } catch (error) {
-                logger.error("Error during distribution:", error);
-                throw error;
+            console.log("Txn size:", serializedMsg.length);
+            if (serializedMsg.length > MAX_TX_SIZE) {
+                logger.error("Transaction size exceeds 1232 bytes");
+                return;
             }
+
+            transaction.sign([payer]);
+            bundleTxns.push(transaction);
+        } catch (error) {
+            logger.error("Error creating transaction:", error);
+            return;
+        }
+    }
+
+    const simulationPromises = bundleTxns.map((transaction) => simulateTransaction(connection, transaction));
+    const simulationResults = await Promise.all(simulationPromises);
+    const failedTransactions = simulationResults.filter((result) => !result);
+    if (failedTransactions.length > 0) {
+        logger.error(`Simulation failed for ${failedTransactions.length} transactions`);
+        return;
+    }
+
+    const bundleId = await jitoClient.sendBundle(bundleTxns);
+    if (!bundleId) {
+        logger.error("Failed to send bundle");
+        return;
+    }
+    logger.info(`Bundle sent successfully with ID: ${bundleId}`);
+
+    for (const transaction of bundleTxns) {
+        const signature = bs58.encode(transaction.signatures[0]);
+        const isConfirmed = await confirmTransaction(connection, signature);
+        if (!isConfirmed) {
+            logger.error(`Transaction ${signature} failed to confirm`);
+        } else {
+            logger.info(`Transaction ${signature} confirmed successfully`);
         }
     }
 }
@@ -182,8 +204,7 @@ export const simulateTransaction = async (connection: Connection, transaction: V
     let success = false;
     const simulationResult = await connection.simulateTransaction(transaction, { commitment: "processed" });
     if (simulationResult.value.err) {
-        logger.error("Simulation error for transaction:", simulationResult);
-        logger.error("Simulation error for transaction:", simulationResult.value.err);
+        logger.error(`Simulation error for transaction: ${simulationResult.value.err}`);
     } else {
         success = true;
     }

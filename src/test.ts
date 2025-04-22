@@ -19,6 +19,8 @@ import {
     DISTRIBUTION_AMOUNT,
     FEE_PAYER_KEYPAIR,
     GENERATE_WALLETS,
+    JITO_BLOCK_ENGINE_URL,
+    JITO_KEYPAIR,
     NUMBER_OF_WALLETS,
     PROXY_URL,
     QUOTE_MINT,
@@ -40,10 +42,10 @@ import {
     simulateTransaction,
     sleep
 } from "./utils";
-import { generateWallets, loadWalletsFromFile, saveWalletsToFile } from "./wallets";
 import { logger } from './logger';
-import { addTipToTransaction, getJitoTipFloor, getRandomTipAccount, sendBundle } from './jito';
 import { BN, Wallet } from '@coral-xyz/anchor';
+import { WalletManager } from './wallet-manager';
+import { JitoClient } from './jito-client';
 dotenv.config();
 
 
@@ -53,74 +55,22 @@ dotenv.config();
 
 const main = async () => {
     const feePayer = Keypair.fromSecretKey(bs58.decode(FEE_PAYER_KEYPAIR));
+    console.log("Fee Payer Public Key:", feePayer.publicKey.toBase58());
     const connection = new Connection(RPC_URL);
 
-    const quoteMint = QUOTE_MINT;
-    const baseMint = BASE_MINT;
-    const amount = 100000;
+    const walletManager = new WalletManager();
+    const wallets = walletManager.loadWallets();
 
-    // Get quote for swap
-    const quoteResponse = await getQuote(quoteMint.toString(), baseMint.toString(), Number(amount), 50, false);
-    if (!quoteResponse) {
-        logger.error("Failed to get quote");
-        return undefined;
-    }
+    const jitoClient = new JitoClient(JITO_KEYPAIR, JITO_BLOCK_ENGINE_URL, connection);
 
-    // Build swap transaction
-    const swapResponse = await buildSwapTransaction(quoteResponse, feePayer.publicKey.toBase58());
-    if (!swapResponse) {
-        logger.error("Failed to perform swap");
-        return undefined;
-    }
-
-
-
-    // Create the tip instruction
-
-
-    // Get the transaction from Jupiter API
-    const transactionBase64 = swapResponse.swapTransaction;
-
-    // There are two approaches we can use:
-
-    // APPROACH 1: Modify the transaction by adding our instruction
-    try {
-        // Deserialize the transaction from base64
-        
-        const swapTransaction = VersionedTransaction.deserialize(Buffer.from(transactionBase64, 'base64'));
-        const newTransaction = await addTipToTransaction(feePayer, swapTransaction, connection);
-        if (!newTransaction) {
-            logger.error("Failed to add tip to transaction");
-            return undefined;
-        }
-        const signature = bs58.encode(newTransaction.signatures[0]);
-        console.log(signature);
-
-        // 6. Simulate the transaction
-        const isSimulationSuccess = await simulateTransaction(connection, newTransaction);
-        if (!isSimulationSuccess) {
-            logger.error("Failed to simulate transaction");
-            return undefined;
-        }
-
-        if (isSimulationSuccess) {
-            logger.info('Transaction simulation was successful)');
-            const bundleResult = await sendBundle([newTransaction]);
-            console.log(bundleResult);
-
-            const isTxConfirmed = await confirmTransaction(connection, signature);
-            console.log(isTxConfirmed);
-        }
-
-        return undefined;
-    } catch (error) {
-        logger.error(`Error modifying transaction: ${error}`);
-
-        // APPROACH 2: Use the Jupiter API to include the tip instruction
-        // This would require modifying your buildSwapTransaction function to accept additional instructions
-
-        return undefined;
-    }
+    const distributionAmount = parseUnits(DISTRIBUTION_AMOUNT, 9);
+    await walletManager.distributeSol(
+        feePayer,
+        wallets,
+        distributionAmount,
+        connection,
+        jitoClient
+    );
 };
 
 
