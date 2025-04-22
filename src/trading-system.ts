@@ -169,6 +169,12 @@ export class TradingSystem {
 
         // Add Jito tip transaction
         try {
+            if (transactions.length === 0) {
+                logger.error("No transactions to add Jito tip transaction");
+                return transactions;
+            }
+            logger.info("Adding Jito tip transaction...");
+
             const jitoTx = await this.jitoClient.buildTipTransaction(this.feePayer);
             if (jitoTx) {
                 jitoTx.sign([this.feePayer]);
