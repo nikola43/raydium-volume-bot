@@ -55,10 +55,10 @@ export class JitoClient {
      */
     private initSearcherClient(): SearcherClient {
         if (!this.searcherClient) {
-            this.searcherClient = jitoSearcherClient(this.blockEngineUrl)
-            // this.searcherClient = jitoSearcherClient(this.blockEngineUrl, this.keypair, {
-            //     'grpc.keepalive_timeout_ms': 4000,
-            // });
+            // this.searcherClient = jitoSearcherClient(this.blockEngineUrl)
+            this.searcherClient = jitoSearcherClient(this.blockEngineUrl, this.keypair, {
+                'grpc.keepalive_timeout_ms': 4000,
+            });
 
         }
         return this.searcherClient;
@@ -91,10 +91,10 @@ export class JitoClient {
      * @returns Promise with tip account address or null if error
      */
     static async getRandomTipAccount(): Promise<string | null> {
-        let testnetAccounts = [
-            "AzfhMPcx3qjbvCK3UUy868qmc5L451W341cpFqdL3EBe"
-        ]
-        return testnetAccounts[Math.floor(Math.random() * testnetAccounts.length)];
+        // let testnetAccounts = [
+        //     "AzfhMPcx3qjbvCK3UUy868qmc5L451W341cpFqdL3EBe"
+        // ]
+        // return testnetAccounts[Math.floor(Math.random() * testnetAccounts.length)];
 
 
         try {

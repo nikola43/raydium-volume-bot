@@ -16,11 +16,132 @@ export const checkIfTokenATAExists = async (keypair: Keypair, mint: string, conn
     }
 }
 
-export const createTokenAta = async (payer: Keypair, wallets: Keypair[], mint: string, connection: Connection, jitoClient: JitoClient) => {
+// Extracted function for creating a versioned transaction from instructions
+export const createVersionedTransaction = async (
+    payer: Keypair,
+    instructions: TransactionInstruction[],
+    connection: Connection
+): Promise<VersionedTransaction | null> => {
+    try {
+        const latestBlockhash = await connection.getLatestBlockhash(COMMITMENT);
+        const messageV0 = new TransactionMessage({
+            payerKey: payer.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions
+        }).compileToV0Message();
 
+        const transaction = new VersionedTransaction(messageV0);
+        const serializedMsg = transaction.serialize();
+
+        console.log("Txn size:", serializedMsg.length);
+        if (serializedMsg.length > MAX_TX_SIZE) {
+            logger.error("Transaction size exceeds 1232 bytes");
+            return null;
+        }
+
+        transaction.sign([payer]);
+        return transaction;
+    } catch (error) {
+        logger.error("Error creating transaction:", error);
+        return null;
+    }
+}
+
+// Extracted function for simulating transactions
+export const simulateTransactions = async (
+    transactions: VersionedTransaction[],
+    connection: Connection
+): Promise<boolean> => {
+    const simulationPromises = transactions.map(async (transaction) => {
+        const simulationResult = await connection.simulateTransaction(transaction, { commitment: COMMITMENT });
+        const simulationSuccess = !simulationResult.value.err;
+        if (simulationResult.value.err) {
+            logger.error(`Simulation error for transaction: ${JSON.stringify(simulationResult.value.err)}`);
+        }
+        return simulationSuccess;
+    });
+
+    const simulationResults = await Promise.all(simulationPromises);
+    const failedTransactions = simulationResults.filter((result) => !result);
+
+    if (failedTransactions.length > 0) {
+        logger.error(`Simulation failed for ${failedTransactions.length} transactions`);
+        return false;
+    }
+
+    return true;
+}
+
+// Extracted function for processing a bundle of transactions
+export const processBundleTransactions = async (
+    transactions: VersionedTransaction[],
+    connection: Connection,
+    jitoClient: JitoClient
+): Promise<boolean> => {
+    // Simulate transactions
+    const simulationSuccess = await simulateTransactions(transactions, connection);
+    if (!simulationSuccess) {
+        return false;
+    }
+    logger.info("All transactions simulated successfully, sending bundle...");
+
+    // // Send bundle
+    // const bundleId = await jitoClient.sendBundle(transactions);
+    // if (!bundleId) {
+    //     logger.error("Failed to send bundle");
+    //     return false;
+    // }
+    // logger.info(`Bundle sent successfully with ID: ${bundleId}`);
+
+    // // Confirm transactions
+    // for (const transaction of transactions) {
+    //     const signature = bs58.encode(transaction.signatures[0]);
+    //     const isConfirmed = await confirmTransaction(connection, signature);
+    //     if (!isConfirmed) {
+    //         logger.error(`Transaction ${signature} failed to confirm`);
+    //     } else {
+    //         logger.info(`Transaction ${signature} confirmed successfully`);
+    //     }
+    // }
+
+    return true;
+}
+
+// Extracted function for processing instructions in chunks
+export const processInstructionsInChunks = async (
+    payer: Keypair,
+    instructions: TransactionInstruction[],
+    chunkSize: number,
+    connection: Connection,
+    jitoClient: JitoClient
+): Promise<boolean> => {
+    const bundleTxns: VersionedTransaction[] = [];
+    const ixsChunks = chunkArray(instructions, chunkSize);
+
+    // Create transactions for each chunk
+    for (const ixsChunk of ixsChunks) {
+        const transaction = await createVersionedTransaction(payer, ixsChunk, connection);
+        if (!transaction) {
+            return false;
+        }
+        bundleTxns.push(transaction);
+    }
+
+    // Process the bundle
+    return await processBundleTransactions(bundleTxns, connection, jitoClient);
+}
+
+export const createTokenAta = async (
+    payer: Keypair,
+    wallets: Keypair[],
+    mint: string,
+    connection: Connection,
+    jitoClient: JitoClient
+) => {
     const ixs: TransactionInstruction[] = [];
     const chunkSize = 12; // Max 12 DO NOT EXCEED THIS
 
+    // Collect instructions for creating token accounts
     for (const wallet of wallets) {
         const tokenATA = await getAssociatedTokenAddress(new PublicKey(mint), wallet.publicKey);
         const tokenAccount = await connection.getAccountInfo(tokenATA);
@@ -40,6 +161,7 @@ export const createTokenAta = async (payer: Keypair, wallets: Keypair[], mint: s
         }
     }
 
+    // Add tip instruction
     const tipIx = await JitoClient.buildTipInstruction(payer);
     if (!tipIx) {
         logger.error("Failed to build tip instruction");
@@ -47,82 +169,40 @@ export const createTokenAta = async (payer: Keypair, wallets: Keypair[], mint: s
     }
     ixs.push(tipIx);
 
-    const bundleTxns: VersionedTransaction[] = [];
-    const ixsChunks = chunkArray(ixs, chunkSize);
-
-    for (const ixsChunk of ixsChunks) {
-        try {
-            const latestBlockhash = await connection.getLatestBlockhash(COMMITMENT);
-            const messageV0 = new TransactionMessage({
-                payerKey: payer.publicKey,
-                recentBlockhash: latestBlockhash.blockhash,
-                instructions: ixsChunk
-            }).compileToV0Message();
-
-            const transaction = new VersionedTransaction(messageV0);
-            const serializedMsg = transaction.serialize();
-
-            console.log("Txn size:", serializedMsg.length);
-            if (serializedMsg.length > MAX_TX_SIZE) {
-                logger.error("Transaction size exceeds 1232 bytes");
-                return;
-            }
-
-            transaction.sign([payer]);
-            bundleTxns.push(transaction);
-        } catch (error) {
-            logger.error("Error creating transaction:", error);
-            return;
-        }
-    }
-
-    const simulationPromises = bundleTxns.map(async (transaction) => {
-        const simulationResult = await connection.simulateTransaction(transaction, { commitment: COMMITMENT });
-        const simulationSuccess = !simulationResult.value.err;
-        if (simulationResult.value.err) {
-            logger.error(`Simulation error for transaction: ${JSON.stringify(simulationResult.value.err)}`);
-        }
-        return simulationSuccess;
-    });
-    const simulationResults = await Promise.all(simulationPromises);
-    const failedTransactions = simulationResults.filter((result) => !result);
-    if (failedTransactions.length > 0) {
-        logger.error(`Simulation failed for ${failedTransactions.length} transactions`);
-        return;
-    }
-
-    const bundleId = await jitoClient.sendBundle(bundleTxns);
-    if (!bundleId) {
-        logger.error("Failed to send bundle");
-        return;
-    }
-    logger.info(`Bundle sent successfully with ID: ${bundleId}`);
-
-    for (const transaction of bundleTxns) {
-        const signature = bs58.encode(transaction.signatures[0]);
-        const isConfirmed = await confirmTransaction(connection, signature);
-        if (!isConfirmed) {
-            logger.error(`Transaction ${signature} failed to confirm`);
-        } else {
-            logger.info(`Transaction ${signature} confirmed successfully`);
-        }
-    }
-
-
+    // Process the instructions
+    await processInstructionsInChunks(payer, ixs, chunkSize, connection, jitoClient);
 }
 
-export const getRandomWallets = (num: number, wallets: Keypair[]): Keypair[] => {
-    const swapPairs: Keypair[] = [];
+export const distributeSol = async (
+    payer: Keypair,
+    wallets: Keypair[],
+    amount: number,
+    connection: Connection,
+    jitoClient: JitoClient
+) => {
+    const ixs: TransactionInstruction[] = [];
+    const chunkSize = 21; // Max 21 instructions per transaction DO NOT EXCEED THIS
 
-    while (swapPairs.length < num) {
-        const wallet = wallets[Math.floor(Math.random() * wallets.length)];
-
-        if (swapPairs.find((pair) => pair.publicKey.toBase58() == wallet.publicKey.toBase58())) {
-            continue;
-        }
-        swapPairs.push(wallet);
+    // Collect instructions for transferring SOL
+    for (const wallet of wallets) {
+        ixs.push(
+            SystemProgram.transfer({
+                fromPubkey: payer.publicKey,
+                toPubkey: wallet.publicKey,
+                lamports: amount,
+            }));
     }
-    return swapPairs;
+
+    // Add tip instruction
+    const tipIx = await JitoClient.buildTipInstruction(payer);
+    if (!tipIx) {
+        logger.error("Failed to build tip instruction");
+        return;
+    }
+    ixs.push(tipIx);
+
+    // Process the instructions
+    await processInstructionsInChunks(payer, ixs, chunkSize, connection, jitoClient);
 }
 
 export const confirmTransaction = async (connection: Connection, signature: string): Promise<boolean> => {
@@ -156,87 +236,18 @@ export const confirmTransaction = async (connection: Connection, signature: stri
     return isConfirmed;
 }
 
+export const getRandomWallets = (num: number, wallets: Keypair[]): Keypair[] => {
+    const swapPairs: Keypair[] = [];
 
-export const distributeSol = async (payer: Keypair, wallets: Keypair[], amount: number, connection: Connection, jitoClient: JitoClient) => {
-    const transferIxs: TransactionInstruction[] = [];
-    const chunkSize = 21; // Max 21 instructions per transaction DO NOT EXCEED THIS
+    while (swapPairs.length < num) {
+        const wallet = wallets[Math.floor(Math.random() * wallets.length)];
 
-    for (const wallet of wallets) {
-        transferIxs.push(
-            SystemProgram.transfer({
-                fromPubkey: payer.publicKey,
-                toPubkey: wallet.publicKey,
-                lamports: amount,
-            }));
-    }
-
-    const tipIx = await JitoClient.buildTipInstruction(payer);
-    if (!tipIx) {
-        logger.error("Failed to build tip instruction");
-        return;
-    }
-    transferIxs.push(tipIx);
-
-    const bundleTxns: VersionedTransaction[] = [];
-    const ixsChunks = chunkArray(transferIxs, chunkSize);
-
-    for (const ixsChunk of ixsChunks) {
-        try {
-            const latestBlockhash = await connection.getLatestBlockhash(COMMITMENT);
-            const messageV0 = new TransactionMessage({
-                payerKey: payer.publicKey,
-                recentBlockhash: latestBlockhash.blockhash,
-                instructions: ixsChunk
-            }).compileToV0Message();
-
-            const transaction = new VersionedTransaction(messageV0);
-            const serializedMsg = transaction.serialize();
-
-            console.log("Txn size:", serializedMsg.length);
-            if (serializedMsg.length > MAX_TX_SIZE) {
-                logger.error("Transaction size exceeds 1232 bytes");
-                return;
-            }
-
-            transaction.sign([payer]);
-            bundleTxns.push(transaction);
-        } catch (error) {
-            logger.error("Error creating transaction:", error);
-            return;
+        if (swapPairs.find((pair) => pair.publicKey.toBase58() == wallet.publicKey.toBase58())) {
+            continue;
         }
+        swapPairs.push(wallet);
     }
-
-    const simulationPromises = bundleTxns.map(async (transaction) => {
-        const simulationResult = await connection.simulateTransaction(transaction, { commitment: COMMITMENT });
-        const simulationSuccess = !simulationResult.value.err;
-        if (simulationResult.value.err) {
-            logger.error(`Simulation error for transaction: ${JSON.stringify(simulationResult.value.err)}`);
-        }
-        return simulationSuccess;
-    });
-    const simulationResults = await Promise.all(simulationPromises);
-    const failedTransactions = simulationResults.filter((result) => !result);
-    if (failedTransactions.length > 0) {
-        logger.error(`Simulation failed for ${failedTransactions.length} transactions`);
-        return;
-    }
-
-    const bundleId = await jitoClient.sendBundle(bundleTxns);
-    if (!bundleId) {
-        logger.error("Failed to send bundle");
-        return;
-    }
-    logger.info(`Bundle sent successfully with ID: ${bundleId}`);
-
-    for (const transaction of bundleTxns) {
-        const signature = bs58.encode(transaction.signatures[0]);
-        const isConfirmed = await confirmTransaction(connection, signature);
-        if (!isConfirmed) {
-            logger.error(`Transaction ${signature} failed to confirm`);
-        } else {
-            logger.info(`Transaction ${signature} confirmed successfully`);
-        }
-    }
+    return swapPairs;
 }
 
 export const getTokenBalance = async (connection: Connection, mintAddress: string, keypair: Keypair) => {

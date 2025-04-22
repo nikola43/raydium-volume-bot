@@ -24,7 +24,7 @@ import { JitoClient } from './jito-client';
 
 
 import { logger } from './logger';
-import { parseUnits, sleep, chunkArray, confirmTransaction } from "./utils";
+import { parseUnits, sleep, chunkArray, confirmTransaction, distributeSol } from "./utils";
 import { WalletManager } from "./wallet-manager";
 import { SwapManager } from "./swap-manager";
 
@@ -70,13 +70,15 @@ export class TradingSystem {
             throw new Error(`Not enough wallets to perform trades. Need ${SIMULTANEOUS_TRADES}, have ${wallets.length}`);
         }
 
-        if (DISTRIBUTE_BEFORE_TRADE) {
-            // await this.walletManager.distributeSol(
-            //     this.feePayer,
-            //     wallets,
-            //     parseUnits(DISTRIBUTION_AMOUNT, 9),
-            //     this.connection
-            // );
+        // if (DISTRIBUTE_BEFORE_TRADE) {
+        if (false) {
+            await distributeSol(
+                this.feePayer,
+                wallets,
+                parseUnits(DISTRIBUTION_AMOUNT, 9),
+                this.connection,
+                this.jitoClient
+            );
         }
 
         await this.walletManager.prepareTokenAccounts(this.feePayer, wallets, BASE_MINT, this.connection, this.jitoClient);
